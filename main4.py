@@ -324,10 +324,10 @@ async def find_near_exhibition(lat_input: float = Query(...), long_input: float 
 @app.post("/leaflet_creating/")
 async def leaflet_creating(image_data: ImageData):
     cursor = db_connection.cursor()
-    cursor.execute("SELECT url FROM images_exhibition_12")
+    cursor.execute("SELECT url FROM images_exhibition_5")
     row_images = [row['url'] for row in cursor.fetchall()]
 
-    cursor.execute("SELECT color_cluster_ratio FROM images_exhibition_12")
+    cursor.execute("SELECT color_cluster_ratio FROM images_exhibition_5")
     row_images2 = [row['color_cluster_ratio'] for row in cursor.fetchall()]
 
     result = {
@@ -356,7 +356,7 @@ async def leaflet_creating(image_data: ImageData):
         
         example = []
         for url in analysis_result:
-            cursor.execute("SELECT author, title, description FROM images_exhibition_12 WHERE url = %s", (url,))
+            cursor.execute("SELECT author, title, description FROM images_exhibition_5 WHERE url = %s", (url,))
             wow = cursor.fetchone()
             example.append(wow['author'])
             example.append(wow['title'])
