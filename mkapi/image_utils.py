@@ -227,8 +227,8 @@ def find_best_matching_images(user_images_urls, image_url_list, similarity_thres
         'color_cluster_ratio': []
     }
 
-    akaze = cv2.AKAZE_create()
-    #orb = cv2.ORB_create()
+    #akaze = cv2.AKAZE_create()
+    orb = cv2.ORB_create()
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
     akaze_exhibition = {
         'url': [],
@@ -236,16 +236,16 @@ def find_best_matching_images(user_images_urls, image_url_list, similarity_thres
     }
     for exhibition_url, exhibition_img in exhibition_images:
         img2_gray = cv2.cvtColor(exhibition_img, cv2.COLOR_BGR2GRAY)
-        _, descriptors2_akaze = akaze.detectAndCompute(img2_gray, None)
-        #_, descriptors2_akaze = orb.detectAndCompute(img2_gray, None)
+       # _, descriptors2_akaze = akaze.detectAndCompute(img2_gray, None)
+        _, descriptors2_akaze = orb.detectAndCompute(img2_gray, None)
         akaze_exhibition["url"].append(exhibition_url)
         akaze_exhibition['descriptors'].append(descriptors2_akaze)
     
     for user_filename, user_img in user_images:
 
         img1_gray = cv2.cvtColor(user_img, cv2.COLOR_BGR2GRAY)
-        keypoints1_akaze, descriptors1_akaze = akaze.detectAndCompute(img1_gray, None)
-        #keypoints1_akaze, descriptors1_akaze = orb.detectAndCompute(img1_gray, None)
+        #keypoints1_akaze, descriptors1_akaze = akaze.detectAndCompute(img1_gray, None)
+        keypoints1_akaze, descriptors1_akaze = orb.detectAndCompute(img1_gray, None)
        
         best_match_url = None
         best_similarity = 0
