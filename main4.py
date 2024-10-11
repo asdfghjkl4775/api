@@ -1,31 +1,24 @@
-
 import json
 import os
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 import uvicorn
 from pydantic import BaseModel, HttpUrl
 from typing import List
 import sys
 import random
-import aiomysql
+import pymysql
 import logging
 from collections import Counter
-from fastapi.middleware.cors import CORSMiddleware
-import asyncio
+from fastapi import Query
+
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from mkapi.image_utils import (
-    analyze_images_and_cluster,
-    find_signiture_color,
-    exact_match,
-    count_matches,
-    find_matching_images,
-    random_exhibition,
-    find_nearby_exhibitions,
-    leaflet_design,
-)
+from mkapi.image_utils import analyze_images_and_cluster, find_signiture_color, exact_match, count_matches, find_matching_images, random_exhibition, find_nearby_exhibitions, leaflet_design
+from fastapi.middleware.cors import CORSMiddleware
+
 
 app = FastAPI()
+
 
 # Define CORS settings
 origins = ["*"]  # Allow requests from any origin
@@ -38,7 +31,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
-
 
 
 color_dict = {
@@ -238,24 +230,24 @@ color_dict = {
 }
 
 
+
+
 db_config = {
-    "host": "database-1.c588s0060coo.ap-northeast-2.rds.amazonaws.com",
-    "user": "admin",
-    "password": "restartart",
-    "database": "imci_restartdb",
+    'host': 'database-1.c588s0060coo.ap-northeast-2.rds.amazonaws.com',
+    'user': 'admin',
+    'password': 'restartart',
+    'database': 'imci_restartdb'
 }
 
 
-async def connect_db(config):
-    """데이터베이스 연결 함수"""
+def connect_db(config):
+    """ 데이터베이스 연결 함수 """
     try:
-        connection = await aiomysql.connect(
-            host=config["host"],
-            user=config["user"],
-            password=config["password"],
-            db=config["database"],
-            cursorclass=aiomysql.DictCursor,
-        )
+        connection = pymysql.connect(host=config['host'],
+                                     user=config['user'],
+                                     password=config['password'],
+                                     database=config['database'],
+                                     cursorclass=pymysql.cursors.DictCursor)
         logging.info("Database connection successful")
         return connection
     except Exception as e:
@@ -264,13 +256,7 @@ async def connect_db(config):
 
 
 # 데이터베이스 연결
-db_connection = None
-
-
-@app.on_event("startup")
-async def startup_event():
-    global db_connection
-    db_connection = await connect_db(db_config)
+db_connection = connect_db(db_config)
 
 
 class ImageData(BaseModel):
@@ -278,64 +264,58 @@ class ImageData(BaseModel):
         "https://ifh.cc/g/oY2K9B.jpg",
         "https://ifh.cc/g/zwxOAA.jpg",
         "https://ifh.cc/g/XSAScb.jpg",
-        "https://ifh.cc/g/DgrlJL.jpg",
-    ]
+        "https://ifh.cc/g/DgrlJL.jpg"]
+
 
 
 class SignitureImageData(BaseModel):
     user_images_urls: List[str]
 
-
 class lat_long(BaseModel):
-    lat_long_list: List[float] = [37.5173319258532, 127.047377408384]
-
-
+    lat_long_list: List[float] = [
+        37.5173319258532,
+        127.047377408384
+    ]
 class lat_long_input(BaseModel):
     lat_input: float = 37.5173319258532
     long_input: float = 127.047377408384
 
-
-@app.get("/find_near_exhibition/")
-async def find_near_exhibition(
-    lat_input: float = Query(...), long_input: float = Query(...)
-):
-    async with db_connection.cursor() as cursor:
-        await cursor.execute("SELECT name, latitude, longitude FROM exhibitions")
-        exhibitions = await cursor.fetchall()
+@app.get('/find_near_exhibition/')
+async def find_near_exhibition(lat_input: float = Query(...), long_input: float = Query(...)):
+    cursor = db_connection.cursor()
+    cursor.execute("SELECT name FROM exhibitions")
+    exhibition = [row['name'] for row in cursor.fetchall()]
+    cursor.execute("SELECT latitude FROM exhibitions")
+    exhibition2 = [row['latitude'] for row in cursor.fetchall()]
+    cursor.execute("SELECT longitude FROM exhibitions")
+    exhibition3 = [row['longitude'] for row in cursor.fetchall()]
 
     exhibition_info = [
-        [ex["name"], [float(ex["latitude"]), float(ex["longitude"])]]
-        for ex in exhibitions
+        [exhibition[i], [float(exhibition2[i]), float(exhibition3[i])]]
+        for i in range(len(exhibition))
     ]
-
+    
     # 사용자의 위치 정보 설정
     user_location = [lat_input, long_input]
     location_ex = lat_long(lat_long_list=user_location)
-
+    
     # 반경 설정
     radius = 100
     # 가장 가까운 전시회를 찾는 로직
-    nearest_exhibition_name = find_nearby_exhibitions(
-        location_ex.lat_long_list, exhibition_info, radius
-    )
-
+    nearest_exhibition_name = find_nearby_exhibitions(location_ex.lat_long_list, exhibition_info, radius)
+    
     # 상세 전시회 정보 가져오기
-    async with db_connection.cursor() as cursor:
-        await cursor.execute(
-            "SELECT start_date, end_date, description, exhibition_img FROM exhibitions WHERE name = %s",
-            (nearest_exhibition_name,),
-        )
-        result = await cursor.fetchone()
-
+    cursor.execute("SELECT start_date, end_date, description,exhibition_img FROM exhibitions WHERE name = %s", (nearest_exhibition_name,))
+    result = cursor.fetchone()
     detailed_exhibition = {}
 
     if result:
         detailed_exhibition = {
-            "name": nearest_exhibition_name,
-            "start_date": result["start_date"],
-            "end_date": result["end_date"],
-            "description": result["description"],
-            "exhibition_img": result["exhibition_img"],
+            'name': nearest_exhibition_name,
+            'start_date': result['start_date'],
+            'end_date': result['end_date'],
+            'description': result['description'],
+            "exhibition_img":result["exhibition_img"]
         }
 
     return detailed_exhibition
@@ -343,151 +323,158 @@ async def find_near_exhibition(
 
 @app.post("/leaflet_creating/")
 async def leaflet_creating(image_data: ImageData):
-    async with db_connection.cursor() as cursor:
-        await cursor.execute("SELECT url, color_cluster_ratio FROM images_exhibition_12")
-        images_data = await cursor.fetchall()
+    cursor = db_connection.cursor()
+    cursor.execute("SELECT url FROM images_exhibition_12")
+    row_images = [row['url'] for row in cursor.fetchall()]
+
+    cursor.execute("SELECT color_cluster_ratio FROM images_exhibition_12")
+    row_images2 = [row['color_cluster_ratio'] for row in cursor.fetchall()]
 
     result = {
-        "url": [row["url"] for row in images_data],
-        "color_cluster_ratio": [row["color_cluster_ratio"] for row in images_data],
+        'url': [],
+        'color_cluster_ratio' : []
     }
+    result['url'] = row_images
+    result['color_cluster_ratio'] = row_images2
 
     try:
-        find_matching_payload = ImageData(user_images_urls=image_data.user_images_urls)
+
+        find_matching_payload = ImageData(
+            user_images_urls=image_data.user_images_urls,
+        )
         # 1. 유사도 분석 돌리기
+
         matching_images_response = find_matching_images(find_matching_payload, result)
-        matching_urls = matching_images_response["matching_urls"]
+
+        matching_urls = matching_images_response['matching_urls']
+
 
         # 2. 스펙트럴 클러스터링 하기
-        analysis_result = analyze_images_and_cluster(matching_urls, result)
-
+        analysis_result = analyze_images_and_cluster(
+            matching_urls,result
+        )
+        
         example = []
-        async with db_connection.cursor() as cursor:
-            for url in analysis_result:
-                await cursor.execute(
-                    "SELECT author, title, description FROM images_exhibition_12 WHERE url = %s",
-                    (url,),
-                )
-                wow = await cursor.fetchone()
-                example.extend([wow["author"], wow["title"], wow["description"]])
+        for url in analysis_result:
+            cursor.execute("SELECT author, title, description FROM images_exhibition_12 WHERE url = %s", (url,))
+            wow = cursor.fetchone()
+            example.append(wow['author'])
+            example.append(wow['title'])
+            example.append(wow['description'])
 
         # 3. 취향분석하기
-        if matching_urls["url"]:
-            color_number_one = find_signiture_color(
-                matching_urls["color_cluster_ratio"]
-            )
+        #max_color = 0
+        
+        # 3. 취향분석하기
+        #max_color = 0
+        if matching_urls['url'] != []:
+            color_number_one = find_signiture_color(matching_urls['color_cluster_ratio'])
         else:
-            color_number_one = find_signiture_color(
-                random.choices(result["color_cluster_ratio"], k=4)
-            )
+            color_number_one = find_signiture_color(random.choices(result['color_cluster_ratio'],k=4))
         text_user = {}
-        for color_name, color_info in color_dict.items():
-            if color_name == color_number_one:
-                text_user = {"user_color": color_info[1]}
-                dominant_color = color_name
-                user_rgb = color_info[0]
+        for i in color_dict.keys():
+            if i == color_number_one:
+                text_user = {"user_color": color_dict[i][1]}
+                dominant_color = i
+                user_rgb = color_dict[i][0]
                 break
 
+
         # 4. 작품 추천하기
-        async with db_connection.cursor() as cursor:
-            await cursor.execute("SELECT * FROM images_exhibition_1")
-            rrow = await cursor.fetchall()
+        cursor.execute("SELECT * FROM images_exhibition_1")
+        rrow = cursor.fetchall()
 
-        new_color_dict = {
-            row["url"]: json.loads(row["color_cluster_ratio"]) for row in rrow
-        }
+        cursor.execute("SELECT url FROM images_exhibition_1")
+        row2 = [row['url'] for row in cursor.fetchall()]
+        cursor.execute("SELECT color_cluster_ratio FROM images_exhibition_1")
+        row3 = [row['color_cluster_ratio'] for row in cursor.fetchall()]
 
-        mood_dict = {row["url"]: row["emotions"] for row in rrow}
+        new_color_dict = {}
+        jj = 0
+        for i in row2:
+            new_color_dict[i] = json.loads(row3[jj])
+            jj+=1
+
+        recommend_picture = None
+
+        mood_dict = {}
+        for i in range(len(rrow)):
+            mood_dict[rrow[i]['url']] = rrow[i]['emotions']
+
 
         max_color = 0
-        recommend_picture = None
         for key, colors in new_color_dict.items():
             for color in colors:
-                if color[0] == dominant_color and color[2] > max_color:
-                    max_color = color[2]
-                    recommend_picture = key
+                if color[0] == dominant_color:
+                    if color[2] > max_color:
+                        max_color = color[2]
+                        recommend_picture = key
+
+
 
         recommend_picture_list = []
         if recommend_picture:
-            for row in rrow:
-                if recommend_picture == row["url"]:
-                    recommend_picture_list.extend(
-                        [
-                            row["url"],
-                            row["title"],
-                            row["author"],
-                            row["description"],
-                        ]
-                    )
-                    break
+            for i in range(len(new_color_dict)):
+                if recommend_picture == rrow[i]['url']:
+                    recommend_picture_list.append(rrow[i]['url'])
+                    recommend_picture_list.append(rrow[i]['title'])
+                    recommend_picture_list.append(rrow[i]['author'])
+                    recommend_picture_list.append(rrow[i]['description'])
         else:
-            no_no = random.randint(0, len(rrow) - 1)
-            selected_row = rrow[no_no]
-            recommend_picture_list.extend(
-                [
-                    selected_row["url"],
-                    selected_row["title"],
-                    selected_row["author"],
-                    selected_row["description"],
-                ]
-            )
-            recommend_picture = selected_row["url"]
+            no_no = random.randint(1, len(rrow))
+            recommend_picture_list.append(rrow[no_no]['url'])
+            recommend_picture_list.append(rrow[no_no]['title'])
+            recommend_picture_list.append(rrow[no_no]['author'])
+            recommend_picture_list.appedn(rrow[no_no]['description'])
+            recommend_picture = rrow[no_no]['url']
 
         target_mood = mood_dict[recommend_picture]
+
         del mood_dict[recommend_picture]
-        all_three_matches = [
-            k for k, v in mood_dict.items() if exact_match(v, target_mood)
-        ]
+        all_three_matches = [k for k, v in mood_dict.items() if exact_match(v, target_mood)]
 
         if all_three_matches:
-            result_picture = random.choice(all_three_matches)
+            # If there are multiple, choose one randomly
+            result = random.choice(all_three_matches)
         else:
-            two_matches = [
-                k for k, v in mood_dict.items() if count_matches(v, target_mood) == 2
-            ]
+            # Find all entries with at least two matching emotions
+            two_matches = [k for k, v in mood_dict.items() if count_matches(v, target_mood) == 2]
+
             if two_matches:
-                result_picture = random.choice(two_matches)
+                # If there are multiple, choose one randomly
+                result = random.choice(two_matches)
             else:
-                one_match = [
-                    k for k, v in mood_dict.items() if count_matches(v, target_mood) == 1
-                ]
+                # Find all entries with at least one matching emotion
+                one_match = [k for k, v in mood_dict.items() if count_matches(v, target_mood) == 1]
+
                 if one_match:
-                    result_picture = random.choice(one_match)
+                    # If there are multiple, choose one randomly
+                    result = random.choice(one_match)
                 else:
-                    result_picture = None
+                    result = None
 
         recommend_picture_list2 = []
-        if result_picture:
-            for row in rrow:
-                if result_picture == row["url"]:
-                    recommend_picture_list2.extend(
-                        [
-                            row["url"],
-                            row["title"],
-                            row["author"],
-                            row["description"],
-                        ]
-                    )
-                    break
+        for i in range(len(mood_dict)):
+            if result == rrow[i]['url']:
+                recommend_picture_list2.append(rrow[i]['url'])
+                recommend_picture_list2.append(rrow[i]['title'])
+                recommend_picture_list2.append(rrow[i]['author'])
+                recommend_picture_list2.append(rrow[i]['description'])
 
-        # 추천전시가 11,12가 뜸
-        async with db_connection.cursor() as cursor:
-            await cursor.execute(
-                "SELECT * FROM exhibitions WHERE exhibition_id = %s OR exhibition_id = %s",
-                (11, 12),
-            )
-            exhibition = await cursor.fetchall()
+        #추천전시가 11,12가 뜸
+        cursor.execute("SELECT * FROM exhibitions WHERE exhibition_id = %s OR exhibition_id = %s", (11, 12))
+        exhibition = cursor.fetchall()
 
         recom_exhibition = random_exhibition(exhibition)
         leaflet_color = leaflet_design(str(dominant_color))
-        text_user["leaflet_design"] = leaflet_color
-
-        text_user["user_rgb"] = user_rgb
-        text_user["recom_picture1"] = recommend_picture_list
-        text_user["recom_picture2"] = recommend_picture_list2
-        text_user["spectral_key"] = [[analysis_result], [example]]
-        text_user["recom_exhibition"] = recom_exhibition
-
+        text_user['leaflet_design'] = leaflet_color
+        
+        text_user['user_rgb'] = user_rgb
+        text_user['recom_picture1'] = recommend_picture_list
+        text_user['recom_picture2'] = recommend_picture_list2
+        text_user['spectral_key'] = [[analysis_result],[example]]
+        text_user['recom_exhibition'] = recom_exhibition
+        
         return text_user
     except HTTPException as e:
         raise e
