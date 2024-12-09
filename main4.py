@@ -1,6 +1,6 @@
 import json
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 import uvicorn
 from pydantic import BaseModel, HttpUrl
 from typing import List
@@ -10,12 +10,17 @@ import pymysql
 import logging
 from collections import Counter
 from fastapi import Query
-
+import joblib
+import pandas as pd
+import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mkapi.image_utils import analyze_images_and_cluster, find_signiture_color, exact_match, count_matches, find_matching_images, random_exhibition, find_nearby_exhibitions, leaflet_design
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.future import select
 
 app = FastAPI()
 
@@ -232,41 +237,84 @@ color_dict = {
 
 
 
-db_config = {
-    'host': 'database-1.c588s0060coo.ap-northeast-2.rds.amazonaws.com',
-    'user': 'admin',
-    'password': 'restartart',
-    'database': 'imci_restartdb'
+# db_config = {
+#     'host': 'database-1.c588s0060coo.ap-northeast-2.rds.amazonaws.com',
+#     'user': 'admin',
+#     'password': 'restartart',
+#     'database': 'imci_restartdb',
+# }
+
+
+# def connect_db(config):
+#     """ 데이터베이스 연결 함수 """
+#     try:
+#         connection = pymysql.connect(host=config['host'],
+#                                      user=config['user'],
+#                                      password=config['password'],
+#                                      database=config['database'],
+#                                      cursorclass=pymysql.cursors.DictCursor)
+#         logging.info("Database connection successful")
+#         return connection
+#     except Exception as e:
+#         logging.error(f"Database connection failed: {e}")
+#         return None
+
+
+# # 데이터베이스 연결
+# db_connection = connect_db(db_config)
+
+from aiomysql import create_pool
+from typing import List, Dict, Any
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import create_engine, text
+
+
+# MySQL 설정
+DB_CONFIG = {
+    "host": "database-1.c588s0060coo.ap-northeast-2.rds.amazonaws.com",
+    "user": "admin",
+    "password": "restartart",
+    "database": "imci_restartdb",
+    "port": 3306,  # 포트 번호
+    "pool_size": 10,  # 연결 풀 크기
+    "max_overflow": 20,  # 최대 초과 연결
 }
 
+DATABASE_URL = f"mysql+pymysql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
 
-def connect_db(config):
-    """ 데이터베이스 연결 함수 """
+# SQLAlchemy 엔진 및 세션 설정
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=DB_CONFIG["pool_size"],
+    max_overflow=DB_CONFIG["max_overflow"],
+    pool_pre_ping=True,  # 재연결 처리 활성화
+    pool_recycle=1800,  # 30분마다 연결 재활용
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# 데이터베이스 세션 의존성
+def get_db():
+    db = SessionLocal()
     try:
-        connection = pymysql.connect(host=config['host'],
-                                     user=config['user'],
-                                     password=config['password'],
-                                     database=config['database'],
-                                     cursorclass=pymysql.cursors.DictCursor)
-        logging.info("Database connection successful")
-        return connection
-    except Exception as e:
-        logging.error(f"Database connection failed: {e}")
-        return None
+        yield db
+    finally:
+        db.close()
 
-
-# 데이터베이스 연결
-db_connection = connect_db(db_config)
-
-
-class ImageData(BaseModel):
+class ImageData2(BaseModel):
     user_images_urls: List[HttpUrl] = [
         "https://ifh.cc/g/oY2K9B.jpg",
         "https://ifh.cc/g/zwxOAA.jpg",
         "https://ifh.cc/g/XSAScb.jpg",
         "https://ifh.cc/g/DgrlJL.jpg"]
 
-
+# 유틸리티 함수
+# def execute_query(db, query: str, params: Any = None) -> List[Dict]:
+#     try:
+#         result = db.execute(text(query), params)
+#         return [dict(row) for row in result]
+#     except SQLAlchemyError as e:
+#         logging.error(f"Database query failed: {e}")
+#         raise HTTPException(status_code=500, detail="Database query failed")
 
 class SignitureImageData(BaseModel):
     user_images_urls: List[str]
@@ -280,33 +328,116 @@ class lat_long_input(BaseModel):
     lat_input: float = 37.5173319258532
     long_input: float = 127.047377408384
 
+class ImageData(BaseModel):
+    user_images_urls: List[HttpUrl] =[
+        "https://ifh.cc/g/oY2K9B.jpg",
+    ]
+
+class TextExplain(BaseModel):
+    text: str = "원하는 분위기의 그림 혹은 인테리어의 감성을 입력"
+
+@app.post('/find_emotion_interior/')
+async def find_emotion_interior(image_data: ImageData, text_data: TextExplain, db:Session=Depends(get_db)):
+    try:
+        # 데이터베이스에서 데이터 가져오기
+        # cursor = db_connection.cursor()
+        # cursor.execute("SELECT url FROM images_exhibition_13")
+        # row_images = [row['url'] for row in cursor.fetchall()]
+        # cursor.execute("SELECT emotions FROM images_exhibition_13")
+        # row_images2 = [row['emotions'] for row in cursor.fetchall()]
+
+        # result = {'url': row_images, 'emotions': row_images2}
+        
+        result_urls = db.execute(text("SELECT url FROM images_exhibition_13")).fetchall()
+        row2 = [row[0] for row in result_urls]
+        
+        # 세 번째 쿼리: 특정 컬럼(color_cluster_ratio) 데이터를 가져오기
+        result_ratios = db.execute(text("SELECT emotions FROM images_exhibition_13")).fetchall()
+        row3 = [row[0] for row in result_ratios]
+
+        result = {'url': row2, 'emotions': row3}
+
+        interior_recom = ImageData(
+            user_images_urls=image_data.user_images_urls,
+        )
+        # 이미지 데이터 처리
+        interior_image = process_image(interior_recom)
+        
+        # 텍스트 데이터 처리
+        interior_text = process_text(text_data)
+        print("interior_text", interior_text)
+        # 데이터 결합
+        final_data = np.hstack((interior_image, interior_text))
+        columns = ['mean_r', 'mean_g', 'mean_b', 'mean_hue', 'mean_saturation', 'mean_value'] + \
+                  [f'tfidf_{i+1}' for i in range(interior_text.shape[1])]
+
+        # DataFrame 생성
+        df = pd.DataFrame(final_data, columns=columns)
+        print("DataFrame:", df)
+        print(df.columns)
+        # 모델 로드 및 예측
+        model = joblib.load('rf_model_joblib.md')
+        target = model.predict(df)
+        sample_targets = ["행복", "기쁨", "사랑", "세련됨", "감각적", "호기심", "경외심", "슬픔", "미움", "걱정", "혼란", "공포", "노여움", "욕심", "동정"]
+        print(sample_targets[target[0]])
+        # encoded_targets, target_classes = encode_targets(sample_targets)
+        # print(target_classes[0], target_classes[1])
+        # print(target_classes[target])
+        real_result = []
+        kk = 0
+        for i in result['emotions']:
+            if (sample_targets[target[0]]==i):
+                real_result.append(result['url'][kk])
+            kk += 1
+        if real_result == []:
+            real_result = random.choice(result['url'])
+
+        return {'prediction': real_result}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+    
 @app.get('/find_near_exhibition/')
-async def find_near_exhibition(lat_input: float = Query(...), long_input: float = Query(...)):
-    cursor = db_connection.cursor()
-    cursor.execute("SELECT name FROM exhibitions")
-    exhibition = [row['name'] for row in cursor.fetchall()]
-    cursor.execute("SELECT latitude FROM exhibitions")
-    exhibition2 = [row['latitude'] for row in cursor.fetchall()]
-    cursor.execute("SELECT longitude FROM exhibitions")
-    exhibition3 = [row['longitude'] for row in cursor.fetchall()]
+async def find_near_exhibition(lat_input: float = Query(...), long_input: float = Query(...), db:Session=Depends(get_db)):
+    # cursor = db_connection.cursor()
+    # cursor.execute("SELECT name FROM exhibitions")
+    # exhibition = [row['name'] for row in cursor.fetchall()]
+    # cursor.execute("SELECT latitude FROM exhibitions")
+    # exhibition2 = [row['latitude'] for row in cursor.fetchall()]
+    # cursor.execute("SELECT longitude FROM exhibitions")
+    # exhibition3 = [row['longitude'] for row in cursor.fetchall()]
+
+    exhibition_all = db.execute(text("SELECT name FROM exhibitions")).fetchall()
+    exhibition = [row[0] for row in exhibition_all]
+
+    # 세 번째 쿼리: 특정 컬럼(color_cluster_ratio) 데이터를 가져오기
+    exhibition_all2 = db.execute(text("SELECT latitude FROM exhibitions")).fetchall()
+    exhibition2 = [row[0] for row in exhibition_all2]
+
+    exhibition_all3 = db.execute(text("SELECT longitude FROM exhibitions")).fetchall()
+    exhibition3 = [row[0] for row in exhibition_all3]
 
     exhibition_info = [
         [exhibition[i], [float(exhibition2[i]), float(exhibition3[i])]]
         for i in range(len(exhibition))
     ]
-    
     # 사용자의 위치 정보 설정
     user_location = [lat_input, long_input]
     location_ex = lat_long(lat_long_list=user_location)
     
     # 반경 설정
-    radius = 1000
+    radius = 100
     # 가장 가까운 전시회를 찾는 로직
     nearest_exhibition_name = find_nearby_exhibitions(location_ex.lat_long_list, exhibition_info, radius)
-    
+    print(nearest_exhibition_name)
     # 상세 전시회 정보 가져오기
-    cursor.execute("SELECT start_date, end_date, description,exhibition_img FROM exhibitions WHERE name = %s", (nearest_exhibition_name,))
-    result = cursor.fetchone()
+    # cursor.execute("SELECT start_date, end_date, description,exhibition_img FROM exhibitions WHERE name = %s", (nearest_exhibition_name,))
+    # result = cursor.fetchone()
+    result = db.execute(
+        text("SELECT start_date, end_date, description, exhibition_img FROM exhibitions WHERE name = :name"),
+        {"name": nearest_exhibition_name}
+    ).mappings().fetchone()
+
     detailed_exhibition = {}
 
     if result:
@@ -321,25 +452,40 @@ async def find_near_exhibition(lat_input: float = Query(...), long_input: float 
     return detailed_exhibition
 
 
+# API 엔드포인트
 @app.post("/leaflet_creating/")
-async def leaflet_creating(image_data: ImageData):
-    cursor = db_connection.cursor()
-    cursor.execute("SELECT url FROM images_exhibition_12")
-    row_images = [row['url'] for row in cursor.fetchall()]
+async def leaflet_creating(image_data: ImageData2, db: Session = Depends(get_db)):
+    # cursor = db_connection.cursor()
+    # cursor.execute("SELECT url FROM images_exhibition_13")
+    # row_images = [row['url'] for row in cursor.fetchall()]
 
-    cursor.execute("SELECT color_cluster_ratio FROM images_exhibition_12")
-    row_images2 = [row['color_cluster_ratio'] for row in cursor.fetchall()]
+    # cursor.execute("SELECT color_cluster_ratio FROM images_exhibition_13")
+    # row_images2 = [row['color_cluster_ratio'] for row in cursor.fetchall()]
 
+
+    # result = {
+    #     'url': [],
+    #     'color_cluster_ratio' : []
+    # }
+    # result['url'] = row_images
+    # result['color_cluster_ratio'] = row_images2
+
+    result_urls = db.execute(text("SELECT url FROM images_exhibition_13")).fetchall()
+    #print(result_urls)
+    row_images = [row[0] for row in result_urls]
+    #print(row_images)
+    result_ratios = db.execute(text("SELECT color_cluster_ratio FROM images_exhibition_13")).fetchall()
+    row_images2 = [row[0] for row in result_ratios]
+    #print(row_images2)
+    # 결과 생성
     result = {
-        'url': [],
-        'color_cluster_ratio' : []
+        'url': row_images,
+        'color_cluster_ratio': row_images2
     }
-    result['url'] = row_images
-    result['color_cluster_ratio'] = row_images2
 
     try:
 
-        find_matching_payload = ImageData(
+        find_matching_payload = ImageData2(
             user_images_urls=image_data.user_images_urls,
         )
         # 1. 유사도 분석 돌리기
@@ -353,14 +499,6 @@ async def leaflet_creating(image_data: ImageData):
         analysis_result = analyze_images_and_cluster(
             matching_urls,result
         )
-        
-        example = []
-        for url in analysis_result:
-            cursor.execute("SELECT author, title, description FROM images_exhibition_12 WHERE url = %s", (url,))
-            wow = cursor.fetchone()
-            example.append(wow['author'])
-            example.append(wow['title'])
-            example.append(wow['description'])
 
         # 3. 취향분석하기
         #max_color = 0
@@ -381,27 +519,40 @@ async def leaflet_creating(image_data: ImageData):
 
 
         # 4. 작품 추천하기
-        cursor.execute("SELECT * FROM images_exhibition_1")
-        rrow = cursor.fetchall()
+        # cursor.execute("SELECT * FROM images_exhibition_1")
+        # rrow = cursor.fetchall()
+        # print(rrow)
+        # cursor.execute("SELECT url FROM images_exhibition_1")
+        # row2 = [row['url'] for row in cursor.fetchall()]
+        # cursor.execute("SELECT color_cluster_ratio FROM images_exhibition_1")
+        # row3 = [row['color_cluster_ratio'] for row in cursor.fetchall()]
 
-        cursor.execute("SELECT url FROM images_exhibition_1")
-        row2 = [row['url'] for row in cursor.fetchall()]
-        cursor.execute("SELECT color_cluster_ratio FROM images_exhibition_1")
-        row3 = [row['color_cluster_ratio'] for row in cursor.fetchall()]
+        rrow = db.execute(text("SELECT * FROM images_exhibition_1")).mappings().all()
+        #print(rrow)
+        # 두 번째 쿼리: 특정 컬럼(url) 데이터를 가져오기
+        result_urls = db.execute(text("SELECT url FROM images_exhibition_1")).fetchall()
+        row2 = [row[0] for row in result_urls]
+        
+        # 세 번째 쿼리: 특정 컬럼(color_cluster_ratio) 데이터를 가져오기
+        result_ratios = db.execute(text("SELECT color_cluster_ratio FROM images_exhibition_1")).fetchall()
+        row3 = [row[0] for row in result_ratios]
 
         new_color_dict = {}
         jj = 0
         for i in row2:
             new_color_dict[i] = json.loads(row3[jj])
             jj+=1
-
+        
         recommend_picture = None
 
         mood_dict = {}
         for i in range(len(rrow)):
             mood_dict[rrow[i]['url']] = rrow[i]['emotions']
-
-
+        # mood_dict = {}
+        # for row in rrow:
+        #     row_dict = row._mapping  # Row를 딕셔너리로 변환
+        #     mood_dict[row_dict['url']] = [row_dict['emotions']]
+        
         max_color = 0
         for key, colors in new_color_dict.items():
             for color in colors:
@@ -410,8 +561,6 @@ async def leaflet_creating(image_data: ImageData):
                         max_color = color[2]
                         recommend_picture = key
 
-
-
         recommend_picture_list = []
         if recommend_picture:
             for i in range(len(new_color_dict)):
@@ -419,15 +568,13 @@ async def leaflet_creating(image_data: ImageData):
                     recommend_picture_list.append(rrow[i]['url'])
                     recommend_picture_list.append(rrow[i]['title'])
                     recommend_picture_list.append(rrow[i]['author'])
-                    recommend_picture_list.append(rrow[i]['description'])
         else:
             no_no = random.randint(1, len(rrow))
             recommend_picture_list.append(rrow[no_no]['url'])
             recommend_picture_list.append(rrow[no_no]['title'])
             recommend_picture_list.append(rrow[no_no]['author'])
-            recommend_picture_list.appedn(rrow[no_no]['description'])
             recommend_picture = rrow[no_no]['url']
-
+        
         target_mood = mood_dict[recommend_picture]
 
         del mood_dict[recommend_picture]
@@ -459,22 +606,24 @@ async def leaflet_creating(image_data: ImageData):
                 recommend_picture_list2.append(rrow[i]['url'])
                 recommend_picture_list2.append(rrow[i]['title'])
                 recommend_picture_list2.append(rrow[i]['author'])
-                recommend_picture_list2.append(rrow[i]['description'])
-
-        #추천전시가 11,12가 뜸
-        cursor.execute("SELECT * FROM exhibitions WHERE exhibition_id = %s OR exhibition_id = %s", (11, 12))
-        exhibition = cursor.fetchall()
-
+        
+        # cursor.execute("SELECT * FROM exhibitions WHERE exhibition_id = %s OR exhibition_id = %s", (11, 12))
+        # exhibition = cursor.fetchall()
+        exhibition = db.execute(
+            text("SELECT * FROM exhibitions WHERE exhibition_id = :id1 OR exhibition_id = :id2"),
+            {"id1": 11, "id2": 12}
+        ).mappings().all()       
+        #print(exhibition)
         recom_exhibition = random_exhibition(exhibition)
+        #print(recom_exhibition)
         leaflet_color = leaflet_design(str(dominant_color))
         text_user['leaflet_design'] = leaflet_color
         
         text_user['user_rgb'] = user_rgb
         text_user['recom_picture1'] = recommend_picture_list
         text_user['recom_picture2'] = recommend_picture_list2
-        text_user['spectral_key'] = [[analysis_result],[example]]
+        text_user['spectral_key'] = [analysis_result]
         text_user['recom_exhibition'] = recom_exhibition
-        
         return text_user
     except HTTPException as e:
         raise e
