@@ -111,6 +111,8 @@ def random_exhibition(exhibition):
     recom_exhibition['end_date'] = recom_exhibition1[0]['end_date']
     return recom_exhibition
 
+
+"""
 def find_matching_images(data: ImageData, image_url_list2):
     if not data.user_images_urls:
         raise HTTPException(status_code=400, detail="The user images URL list is empty.")
@@ -118,6 +120,17 @@ def find_matching_images(data: ImageData, image_url_list2):
     matching_urls = find_best_matching_images(data.user_images_urls, image_url_list2)
 
     return {'matching_urls': matching_urls}
+"""
+
+
+def find_matching_images(data: ImageData, image_url_list2):
+    if not data.user_images_urls:
+        raise HTTPException(status_code=400, detail="The user images URL list is empty.")
+    
+    matching_urls = find_norm_images(data.user_images_urls, image_url_list2)
+
+    return {'matching_urls': matching_urls}
+
 
 def exact_match(emotions, target):
     return set(emotions) == set(target)
@@ -495,6 +508,30 @@ def find1_nearby_exhibitions(current_location, exhibitions, radius):
     else:
         info = None
     return info
+
+
+def find_norm_images(user_images_urls, image_url_list, similarity_threshold=30):
+    exhibition_images = []
+    for url in image_url_list['url']:
+        img = load_image_from_url_with_requests(url)
+        if img is not None:
+            exhibition_images.append((url, img))
+    user_images = []
+    for url in user_images_urls:
+        img = load_image_from_url_with_requests(url)
+        if img is not None:
+            user_images.append((url, img))
+    valid_urls2 = {
+        'url': [],
+        'color_cluster_ratio': []
+    }
+    jj=0
+    for user_filename, user_img in user_images:
+        valid_urls2['url'].append(user_filename)
+        valid_urls2['color_cluster_ratio'].append(image_url_list['color_cluster_ratio'][jj])
+        jj+=1
+    return valid_urls2
+
 
 
 import math
